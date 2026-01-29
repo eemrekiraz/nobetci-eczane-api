@@ -75,3 +75,6 @@ app.get('/api/nobetci', async (req, res) => {
 
 const PORT = 3000;
 app.listen(PORT, () => console.log(`API çalışıyor: http://localhost:${PORT}`));
+
+
+// Render Guncelleme v1
