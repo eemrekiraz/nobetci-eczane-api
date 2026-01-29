@@ -1,4 +1,6 @@
+// Versiyon 1.1 - Paket hatasi duzeltme
 // index.js (Senin API Sunucun)
+
 
 const express = require('express');
 const axios = require('axios');
