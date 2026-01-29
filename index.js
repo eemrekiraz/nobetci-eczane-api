@@ -1,7 +1,3 @@
-// Versiyon 1.1 - Paket hatasi duzeltme
-// index.js (Senin API Sunucun)
-
-
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -10,71 +6,83 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// URL Örneği: http://localhost:3000/api/nobetci?il=istanbul&ilce=kadikoy
 app.get('/api/nobetci', async (req, res) => {
     try {
-        // 1. Kullanıcıdan il ve ilçeyi al
-        const { il, ilce } = req.query;
+        let { il, ilce } = req.query;
         if (!il || !ilce) return res.status(400).json({ error: "İl ve İlçe gerekli!" });
 
-        // Türkçe karakterleri URL formatına çevir (beşiktaş -> besiktas)
-        const slugify = (text) => text.toLowerCase()
-            .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
-            .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
-            .replace(/ /g, '-');
+        // Türkçe karakter temizliği (Daha kapsamlı)
+        const trMap = { 'ç': 'c', 'ğ': 'g', 'ş': 's', 'ü': 'u', 'ö': 'o', 'ı': 'i', 'İ': 'i', 'Ç': 'c', 'Ğ': 'g', 'Ş': 's', 'Ü': 'u', 'Ö': 'o' };
+        const slugify = (text) => text
+            .replace(/[çğşüöıİÇĞŞÜÖ]/g, (char) => trMap[char])
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '-') // Harf harici her şeyi tire yap
+            .replace(/-+/g, '-')        // Çift tireleri tek yap
+            .replace(/^-|-$/g, '');     // Baş ve sondaki tireleri at
 
         const cleanIl = slugify(il);
         const cleanIlce = slugify(ilce);
 
-        // 2. Hedef Siteye Git (Örnek: eczaneler.gen.tr gibi halka açık bir kaynak)
-        // NOT: Burası örnek bir url yapısıdır.
+        // HEDEF SİTE 1: eczaneler.gen.tr (Genelde en stabili budur)
+        // URL Yapısı: https://www.eczaneler.gen.tr/nobetci-istanbul-kadikoy
         const url = `https://www.eczaneler.gen.tr/nobetci-${cleanIl}-${cleanIlce}`;
 
+        console.log(`İstek atılıyor: ${url}`); // Render loglarında görmek için
+
         const { data } = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' } // Kendimizi tarayıcı gibi gösteriyoruz
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
         });
 
-        // 3. HTML'i Yükle
         const $ = cheerio.load(data);
         const eczaneler = [];
 
-        // 4. HTML İçinden Verileri Ayıkla (Sitenin yapısına göre değişir)
-        // Bu class isimleri (.active, .isim vs.) hedef siteye göre ayarlanmalı.
+        // GÜNCEL SELECTORLAR (Sitenin yapısına göre ayarlandı)
+        // Genelde 'active' class'ı o anki nöbetçileri belirtir.
         $('div.active').each((i, el) => {
             const isim = $(el).find('.isim').text().trim();
-            const adres = $(el).find('.adres').text().trim();
+            const adres = $(el).find('.adres').text().replace('Adres Tarifi:', '').trim();
             const telefon = $(el).find('.telefon').text().trim();
 
-            // Konum linkinden koordinat çıkarma (varsa)
-            const mapUrl = $(el).find('a.rota').attr('href');
+            // Konum linkinden koordinat yakalamaya çalışalım
+            const mapLink = $(el).find('a.rota').attr('href') || "";
             let lat = 0, lng = 0;
-            if (mapUrl) {
-                // Linkten lat/lng ayıklama mantığı buraya gelir
+
+            // Google Maps linkinden lat/lng ayıklama (örn: ...q=41.000,29.000...)
+            const match = mapLink.match(/q=([0-9\.]+),([0-9\.]+)/);
+            if (match) {
+                lat = parseFloat(match[1]);
+                lng = parseFloat(match[2]);
             }
 
-            eczaneler.push({
-                id: i,
-                name: isim,
-                address: adres,
-                phone: telefon,
-                lat: lat, // Eğer siteden çekebiliyorsan
-                lng: lng,
-                isOpen: true,
-                distanceText: "Nöbetçi"
-            });
+            if (isim) {
+                eczaneler.push({
+                    id: i,
+                    name: isim,
+                    address: adres,
+                    phone: telefon,
+                    lat: lat,
+                    lng: lng,
+                    isOpen: true,
+                    distanceText: "Nöbetçi",
+                    statusText: "Nöbetçi Eczane"
+                });
+            }
         });
 
-        // 5. Sonucu JSON olarak döndür
-        res.json({ success: true, result: eczaneler });
+        console.log(`Bulunan Eczane Sayısı: ${eczaneler.length}`);
+
+        if (eczaneler.length > 0) {
+            res.json({ success: true, result: eczaneler });
+        } else {
+            // Eğer site yapısı değişmişse veya ilçe bulunamadıysa
+            res.status(404).json({ success: false, error: "Nöbetçi bulunamadı veya site yapısı değişmiş." });
+        }
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Veri çekilemedi." });
+        console.error("Scraping Hatası:", error.message);
+        res.status(500).json({ error: "Sunucu hatası veya kaynak siteye erişilemedi." });
     }
 });
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`API çalışıyor: http://localhost:${PORT}`));
-
-
-// Render Guncelleme v1
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`API ${PORT} portunda çalışıyor.`));
